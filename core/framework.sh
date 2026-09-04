@@ -7,7 +7,7 @@
 # Core constants
 readonly KERNELX_VERSION="2.0.0"
 readonly KERNELX_NAME="KernelX: The Ultimate Kernel Kitchen"
-readonly PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+readonly PROJECT_ROOT="$SCRIPT_DIR"
 
 # Core paths
 readonly CORE_DIR="$SCRIPT_DIR/core"

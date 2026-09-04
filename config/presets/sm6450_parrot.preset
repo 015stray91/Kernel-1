@@ -1,0 +1,20 @@
+# KernelX Preset - Qualcomm SM6450 (Parrot) — Moto G Stylus 5G 2023
+# AnyRealm NUKI Colonel base preset
+
+DEVICE_NAME=parrot
+DEVICE_CODE=parrot
+DEVICE_PLATFORM=qcom
+DEVICE_FAMILY=motorola
+DEVICE_ARCH=arm64
+BUILD_ARCH=arm64
+BUILD_CROSS_COMPILE=aarch64-linux-gnu-
+RAMDISK_COMPRESSION=lz4
+ADVANCED_CUSTOM_DEFCONFIG=ksu-nh.defconfig
+
+# Curated 4-file config set (no GKI inheritance)
+# - ksu-nh.defconfig (KernelSU + SUSFS + ZeroMount + FUSE/OVERLAY/ZRAM/KALLSYMS)
+# - vendor/moto-parrot-sm6450.config (Qualcomm SM6450, 153 CONFIGs)
+# - vendor/ext_config/debug_moto_parrot_genevn.config (Moto G Stylus device, 14 CONFIGs)
+# - nurfs-linux.fragment (NURFS Linux additions, 52 CONFIGs)
+# - consolidate.fragment (GKI consolidation)
+# - defconfig (base)
