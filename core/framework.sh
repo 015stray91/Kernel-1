@@ -260,3 +260,132 @@ export -f core_log core_error core_success core_warn core_info
 export -f core_load_config core_get_config core_set_config
 export -f core_load_module core_module_loaded
 export -f core_progress
+
+# =========================================
+# Self-Healing Build Bridge Logic
+# =========================================
+# Accounts for everything: toolchain, redundancy, auto-retry
+
+find_llvm_version() {
+    local VER="$1"
+    local LADDER_PATH="${LADDER_PATH:-$(pwd)/sources/ladder}"
+    
+    if [ -d "$LADDER_PATH/llvm-binaries/llvm-$VER/bin" ]; then
+        echo "$LADDER_PATH/llvm-binaries/llvm-$VER/bin"
+        return 0
+    fi
+    return 1
+}
+
+expand_with_llvm() {
+    local VER="$1"
+    local CLANG_PATH="$2"
+    local KERNEL_PATH="${KERNEL_PATH:-$(pwd)/sources/kernel}"
+    local KOTO_SO="${KOTO_SO:-$(pwd)/sources/koto/colonel/build/Kotoamatsukami.so}"
+    
+    log_info "Expanding with LLVM $VER..."
+    cd "$KERNEL_PATH"
+    
+    source "$(dirname "$0")/../config/self_healing.config"
+    
+    for src in "${EXPAND_FILES[@]}"; do
+        [ -f "$src" ] || continue
+        
+        $CLANG_PATH/clang -S -emit-llvm "$src" -o "${src%.c}.ll" 2>/dev/null || continue
+        
+        if [ -f "$KOTO_SO" ]; then
+            $CLANG_PATH/opt --load-pass-plugin="$KOTO_SO" "${src%.c}.ll" \
+                --passes="$OBF_PASSES" \
+                -S -o "${src%.c}.ob.ll" 2>/dev/null || continue
+        else
+            $CLANG_PATH/opt "${src%.c}.ll" --passes="flatten,bogus-control-flow,substitution" \
+                -S -o "${src%.c}.ob.ll" 2>/dev/null || continue
+        fi
+        
+        clang "${src%.c}.ob.ll" -S -o "${src%.c}.s" 2>/dev/null || continue
+        mv "${src%.c}.s" "$src"
+        rm -f "${src%.c}.ll" "${src%.c}.ob.ll"
+    done
+    
+    log_info "Expansion complete with LLVM $VER"
+}
+
+try_build_llvm() {
+    local VER="$1"
+    local CLANG_PATH="$2"
+    local KERNEL_PATH="${KERNEL_PATH:-$(pwd)/sources/kernel}"
+    
+    log_info "Trying LLVM $VER..."
+    
+    expand_with_llvm "$VER" "$CLANG_PATH"
+    
+    cd "$KERNEL_PATH"
+    if make -j$(nproc) Image.lz4 modules > /tmp/build_$VER.log 2>&1; then
+        log_success "LLVM $VER build SUCCESS"
+        return 0
+    fi
+    
+    log_warn "LLVM $VER build failed"
+    return 1
+}
+
+# =========================================
+# Main Self-Healing Bridge Function
+# =========================================
+self_healing_bridge() {
+    local KERNEL_PATH="${KERNEL_PATH:-$(pwd)/sources/kernel}"
+    local TOOLCHAIN_PATH="${TOOLCHAIN_PATH:-$(pwd)/sources/toolchain}"
+    local LADDER_PATH="${LADDER_PATH:-$(pwd)/sources/ladder}"
+    
+    log_info "=== Self-Healing Bridge: Finding connection 12->17 ==="
+    
+    # Try simple jump first (17 directly)
+    if [ "$SIMPLE_JUMP_FIRST" = "true" ]; then
+        log_info "Trying simple jump: LLVM 17..."
+        CLANG17=$(find_llvm_version 17)
+        if [ -n "$CLANG17" ]; then
+            if try_build_llvm 17 "$CLANG17"; then
+                log_success "Simple jump works! Bridge: 17"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Simple jump failed. Explore the bridge.
+    log_info "Exploring full bridge..."
+    
+    source "$(dirname "$0")/../config/self_healing.config"
+    
+    for VER in $CLANG_BRIDGE; do
+        CLANG=$(find_llvm_version "$VER")
+        [ -z "$CLANG" ] && continue
+        
+        if try_build_llvm "$VER" "$CLANG"; then
+            log_success "Bridge found: LLVM $VER"
+            return 0
+        fi
+    done
+    
+    # Fallback to pure Clang 12
+    log_warn "All bridges failed. Falling back to Clang 12 (no expansion)"
+    return 1
+}
+
+# =========================================
+# Redundancy: All toolchains pre-built
+# =========================================
+clone_all_toolchains() {
+    local TARGET_DIR="${1:-$(pwd)/sources}"
+    
+    mkdir -p "$TARGET_DIR"
+    cd "$TARGET_DIR"
+    
+    log_info "Cloning all toolchain repos..."
+    
+    [ -d toolchain ] || git clone --depth=1 "$TOOLCHAIN_REPO" toolchain
+    [ -d ladder ] || git clone --depth=1 "$LADDER_REPO" ladder
+    [ -d koto ] || git clone --depth=1 "$KOTO_REPO" koto
+    [ -d patches ] || git clone --depth=1 --branch 015stray91 "$SB_REPO" patches
+    
+    log_info "All toolchains ready"
+}
